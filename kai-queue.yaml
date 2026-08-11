@@ -1,0 +1,18 @@
+apiVersion: scheduling.run.ai/v2
+kind: Queue
+metadata:
+  name: qwen-pretrain-queue
+spec:
+  resources:
+    cpu:
+      quota: -1
+      limit: -1
+      overQuotaWeight: 1
+    gpu:
+      quota: -1
+      limit: -1
+      overQuotaWeight: 1
+    memory:
+      quota: -1
+      limit: -1
+      overQuotaWeight: 1

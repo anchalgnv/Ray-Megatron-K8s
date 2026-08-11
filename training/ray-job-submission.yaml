@@ -1,0 +1,124 @@
+apiVersion: ray.io/v1
+kind: RayJob
+metadata:
+  name: qwen-pretrain-job
+  namespace: default
+  labels:
+    kai.scheduler/queue: qwen-pretrain-queue
+spec:
+  submissionMode: HTTPMode
+  
+  entrypoint: "python /workspace/qwen_pretrain.py"
+  
+  runtimeEnvYAML: |
+    env_vars:
+      HF_HOME: "/workspace/cache"
+      # Fixed spacing error here
+      NCCL_SOCKET_IFNAME: "eth0"
+
+  rayClusterSpec:
+    rayVersion: '2.9.0' 
+    headGroupSpec:
+      rayStartParams:
+        dashboard-host: '0.0.0.0'
+        num-gpus: "0"
+      template:
+        metadata:
+          labels:
+            kai.scheduler/queue: qwen-pretrain-queue
+        spec:
+          containers:
+            - name: ray-head
+              image: nvcr.io/nvidia/nemo:26.04
+              ports:
+                - containerPort: 8265
+                  name: dashboard
+                - containerPort: 10001
+                  name: client
+                - containerPort: 6379
+                  name: gcs-server
+              resources:
+                limits:
+                  cpu: "8"
+                  memory: "32Gi"
+                requests:
+                  cpu: "8"
+                  memory: "32Gi"
+              volumeMounts:
+                - mountPath: /workspace
+                  name: host-storage-volume
+          volumes:
+            - name: host-storage-volume
+              hostPath:
+                path: /mnt/data/training 
+                type: DirectoryOrCreate
+
+    workerGroupSpecs:
+      - groupName: h100-gpu-workers
+        replicas: 1
+        minReplicas: 1
+        maxReplicas: 8
+        rayStartParams: {}
+        template:
+          metadata:
+            labels:
+              kai.scheduler/queue: qwen-pretrain-queue
+          spec:
+            hostIPC: true
+            containers:
+              - name: ray-worker
+                image: nvcr.io/nvidia/nemo:26.04
+                securityContext:
+                  capabilities:
+                    add:
+                      - IPC_LOCK
+                env:
+                  # --- Base PyTorch/Megatron Flags ---
+                  - name: CUDA_DEVICE_MAX_CONNECTIONS
+                    value: "1"
+                  - name: TORCH_NCCL_ASYNC_ERROR_HANDLING
+                    value: "0"
+                  
+                  # --- CPU Threading (Optimized to feed GPUs from 96 cores) ---
+                  - name: OMP_NUM_THREADS
+                    value: "4"
+                  - name: MKL_NUM_THREADS
+                    value: "4"
+                    
+                  # --- H100 NVLink & Communication Optimizations ---
+                  - name: NCCL_NVLS_ENABLE
+                    value: "1"
+                  - name: NCCL_P2P_DISABLE
+                    value: "0"
+                  - name: NCCL_IB_DISABLE
+                    value: "0"
+                  - name: NCCL_BUFFSIZE
+                    value: "8388608"
+                  - name: TORCH_NCCL_AVOID_RECORD_STREAMS
+                    value: "1"
+                  - name: PYTORCH_ALLOC_CONF
+                    value: "expandable_segments:True"
+
+                resources:
+                  limits:
+                    nvidia.com/gpu: "8" 
+                    cpu: "96"           
+                    memory: "800Gi"     
+                  requests:
+                    nvidia.com/gpu: "8"
+                    cpu: "96"
+                    memory: "800Gi"
+                volumeMounts:
+                  - mountPath: /dev/shm
+                    name: dshm
+                  - mountPath: /workspace
+                    name: host-storage-volume
+            volumes:
+              - name: dshm
+                emptyDir:
+                  medium: Memory
+                  sizeLimit: "256Gi"
+              - name: host-storage-volume
+                hostPath:
+                  path: /mnt/data/training 
+                  type: DirectoryOrCreate
